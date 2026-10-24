@@ -1,0 +1,268 @@
+services:
+
+  postgres:
+
+    image: postgres:16
+
+    environment:
+
+      POSTGRES_USER: ${POSTGRES_USER:?Copy .env.example to .env and set POSTGRES_USER}
+
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+
+    volumes:
+
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+
+      interval: 5s
+
+      timeout: 5s
+
+      retries: 15
+
+    restart: unless-stopped
+
+
+ 
+
+  redis:
+
+    image: redis:7-alpine
+
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+    healthcheck:
+
+      test: ["CMD", "redis-cli", "ping"]
+
+      interval: 5s
+
+      timeout: 3s
+
+      retries: 15
+
+    restart: unless-stopped
+
+
+ 
+
+  qdrant:
+
+    image: qdrant/qdrant:v1.12.5
+
+    volumes:
+
+      - qdrant_data:/qdrant/storage
+
+    ports:
+
+      - "6333:6333"
+
+    healthcheck:
+
+      test: ["CMD-SHELL", "grep -q '00000000:18BD 00000000:0000 0A' /proc/net/tcp"]
+
+      interval: 5s
+
+      timeout: 3s
+
+      retries: 20
+
+    restart: unless-stopped
+
+
+ 
+
+  mockerp:
+
+    build:
+
+      context: .
+
+      dockerfile: Dockerfile.mockerp
+
+    environment:
+
+      SAMPLE_DATA_DIR: /app/backend/data
+
+    volumes:
+
+      - ./backend/data:/app/backend/data:ro
+
+    healthcheck:
+
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+
+      interval: 5s
+
+      timeout: 3s
+
+      retries: 15
+
+    restart: unless-stopped
+
+
+ 
+
+  agent:
+
+    build:
+
+      context: .
+
+      dockerfile: Dockerfile.agent
+
+    environment:
+
+      DB_HOST: postgres
+
+      DB_PORT: 5432
+
+      DB_USER: ${POSTGRES_USER}
+
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      DB_NAME: ${POSTGRES_DB}
+
+      REDIS_URL: redis://redis:6379/0
+
+      QDRANT_URL: http://qdrant:6333
+
+      ERP_API_URL: http://mockerp:8001
+
+      HOME: /tmp
+
+      UPLOAD_DIR: /app/runtime/uploads
+
+      SAMPLE_DATA_DIR: /app/backend/data
+
+      INCOMING_DIR: /app/backend/data/incoming
+
+      FOLDER_WATCH_ENABLED: ${FOLDER_WATCH_ENABLED:-true}
+
+      FOLDER_WATCH_INTERVAL_SECONDS: ${FOLDER_WATCH_INTERVAL_SECONDS:-10}
+
+      RULES_PATH: /app/backend/config/rules.yml
+
+      AWS_REGION: ${AWS_REGION:-}
+
+      AWS_DEFAULT_REGION: ${AWS_REGION:-}
+
+      BEDROCK_CHAT_MODEL_ID: ${BEDROCK_CHAT_MODEL_ID:-}
+
+      BEDROCK_EMBEDDING_MODEL_ID: ${BEDROCK_EMBEDDING_MODEL_ID:-}
+
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-15728640}
+
+      REDIS_CACHE_TTL_SECONDS: ${REDIS_CACHE_TTL_SECONDS:-120}
+
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-invoice_chunks}
+
+    volumes:
+
+      - ./runtime/uploads:/app/runtime/uploads
+
+      # Writable: uploads are dropped into backend/data/incoming, which is the monitored folder.
+
+      - ./backend/data:/app/backend/data
+
+    ports:
+
+      - "8000:8000"
+
+    # The agent writes uploaded invoices into the monitored folder (./backend/data/incoming),
+
+    # so it runs as the host user that owns that folder.
+
+    user: "${AGENT_UID:-1004}:${AGENT_GID:-1005}"
+
+    depends_on:
+
+      postgres:
+
+        condition: service_healthy
+
+      redis:
+
+        condition: service_healthy
+
+      qdrant:
+
+        condition: service_healthy
+
+      mockerp:
+
+        condition: service_healthy
+
+    healthcheck:
+
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+
+      interval: 10s
+
+      timeout: 5s
+
+      retries: 10
+
+    restart: unless-stopped
+
+
+ 
+
+  streamlit:
+
+    build:
+
+      context: .
+
+      dockerfile: Dockerfile.streamlit
+
+    environment:
+
+      AGENT_API_URL: http://agent:8000
+
+    ports:
+
+      - "${STREAMLIT_PORT:-8501}:8501"
+
+    depends_on:
+
+      agent:
+
+        condition: service_healthy
+
+    healthcheck:
+
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+
+      interval: 10s
+
+      timeout: 5s
+
+      retries: 10
+
+    restart: unless-stopped
+
+
+ 
+
+volumes:
+
+  postgres_data:
+
+  qdrant_data:
+
+
+ 

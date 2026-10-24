@@ -1,0 +1,55 @@
+FROM python:3.11-slim
+
+
+ 
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+
+    PYTHONUNBUFFERED=1 \
+
+    PIP_NO_CACHE_DIR=1
+
+
+ 
+
+RUN apt-get update \
+
+    && apt-get install -y --no-install-recommends tesseract-ocr \
+
+    && rm -rf /var/lib/apt/lists/*
+
+
+ 
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir torch==2.5.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+RUN printf 'torch==2.5.1\n' > /tmp/pip-constraints.txt \
+
+    && pip install --no-cache-dir -r requirements.txt --constraint /tmp/pip-constraints.txt
+
+COPY backend/ backend/
+
+
+ 
+
+RUN useradd --create-home --uid 10001 appuser \
+
+    && mkdir -p /app/runtime/uploads \
+
+    && chown -R appuser:appuser /app/runtime
+
+USER appuser
+
+
+ 
+
+EXPOSE 8000
+
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+ 
